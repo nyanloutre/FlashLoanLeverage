@@ -11,6 +11,7 @@ import { ILendingPoolAddressesProvider } from "https://raw.githubusercontent.com
 import { ILendingPool } from "https://raw.githubusercontent.com/aave/protocol-v2/master/contracts/interfaces/ILendingPool.sol";
 import { IWETHGateway } from "https://raw.githubusercontent.com/aave/protocol-v2/ice/mainnet-deployment-03-12-2020/contracts/misc/interfaces/IWETHGateway.sol";
 import { IAToken } from "https://raw.githubusercontent.com/aave/protocol-v2/ice/mainnet-deployment-03-12-2020/contracts/interfaces/IAToken.sol";
+import { ICreditDelegationToken } from "https://raw.githubusercontent.com/aave/protocol-v2/master/contracts/interfaces/ICreditDelegationToken.sol";
 
 import { IUniswapV2Router02 } from "https://github.com/Uniswap/uniswap-v2-periphery/blob/master/contracts/interfaces/IUniswapV2Router02.sol";
 
@@ -28,6 +29,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
     
     // Mainnet
     address internal constant DAI_CONTRACT = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+    address internal constant DEBT_DAI_CONTRACT = 0x6C3c78838c761c6Ac7bE9F59fe808ea2A6E4379d;
     address internal constant WETH_CONTRACT = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address internal constant AWETH_CONTRACT = 0x030bA81f1c18d280636F32af80b9AAd02Cf0854e;
     address internal constant AAVE_CONTRACT = 0xB53C1a33016B2DC2fF3653530bfF1848a515c8c5;
@@ -62,7 +64,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
     
         uint deadline = block.timestamp + 15; // Pass this as argument
         
-        IERC20(token).approve(address(UNISWAP_ROUTER), amountIn);
+        IERC20(token).safeApprove(address(UNISWAP_ROUTER), amountIn);
         
         swapReturns = UNISWAP_ROUTER.swapExactTokensForETH(amountIn, amountOutMin, path, address(this), deadline)[0];
         
@@ -84,33 +86,37 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         override
         returns (bool)
     {
+        address sender = abi.decode(params, (address));
+        
         require(assets[0] == DAI_CONTRACT, "AAVE didn't provide expected token");
         
-        uint256 fundsTotal = IERC20(DAI_CONTRACT).balanceOf(address(this));
-        
-        // Convert fundsTotal DAI to ETH
-        uint amountOutMin = 0; // Pass this as argument
-        swapERC20ForETH(DAI_CONTRACT, fundsTotal, amountOutMin);
+        {
+            uint256 fundsTotal = IERC20(DAI_CONTRACT).balanceOf(address(this));
+            // Convert fundsTotal DAI to ETH
+            uint amountOutMin = 0; // Pass this as argument
+            swapERC20ForETH(DAI_CONTRACT, fundsTotal, amountOutMin);
+        }
 
         // Deposit ETH to AAVE 
         
         require(address(this).balance > 0, "Uniswap did not return ETH");
-        WETH_GATEWAY.depositETH{ value: address(this).balance }(address(this), 0);
+        WETH_GATEWAY.depositETH{ value: address(this).balance }(sender, 0);
         // LENDING_POOL.deposit(address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE), address(this).balance, address(this), 0);
         
         // Do something with the aWETH
-        require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) > 0, "Didn't receive any a token");
+        require(IERC20(AWETH_CONTRACT).balanceOf(sender) > 0, "Did not receive any A token");
         // require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) != 0, "Didn't receive any a token");
         
         // Borrow amountOwing DAI and repay the loan
         
         uint amountOwing = amounts[0].add(premiums[0]);
-        
-        LENDING_POOL.borrow(DAI_CONTRACT, amountOwing, 2, 0, address(this));
+        require(ICreditDelegationToken(DEBT_DAI_CONTRACT).borrowAllowance(sender, address(this)) >= amountOwing, "Not enough allowance to borrow");
+        LENDING_POOL.borrow(DAI_CONTRACT, amountOwing, 2, 0, sender);
+
 
         require(IERC20(DAI_CONTRACT).balanceOf(address(this)) >= amountOwing, "Not enough funds to repay");
         
-        IERC20(assets[0]).approve(address(LENDING_POOL), amountOwing);
+        IERC20(assets[0]).safeApprove(address(LENDING_POOL), amountOwing);
 
         return true;
     }
@@ -137,7 +143,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         modes[0] = 0;
 
         address onBehalfOf = address(this);
-        bytes memory params = "";
+        bytes memory params = abi.encode(msg.sender);
         uint16 referralCode = 0;
 
         LENDING_POOL.flashLoan(
