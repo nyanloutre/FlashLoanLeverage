@@ -97,7 +97,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
 
         if(method == CallbackMethod.Open) {
             uint amountOutMin = 0; // TODO: Pass this as argument
-            swapERC20ForETH(assets[0], amounts[0], amountOutMin);
+            swapERC20ForETH(assets[0], IERC20(DAI_CONTRACT).balanceOf(address(this)), amountOutMin);
 
             // Deposit ETH to AAVE
 
@@ -118,7 +118,8 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         } else if (method == CallbackMethod.Close) {
             // Repay the debt using the FlashLoan
             
-            LENDING_POOL.repay(DAI_CONTRACT, amounts[0], 2, sender);
+            IERC20(assets[0]).safeApprove(address(LENDING_POOL), amounts[0]);
+            LENDING_POOL.repay(assets[0], amounts[0], 2, sender);
 
             // Swap aToken for flashloaned token
 
@@ -128,12 +129,25 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
 
             uint swapInput = UNISWAP_ROUTER.getAmountsIn(amountOwing, path)[0]; // How much aToken to swap to repay the FlashLoan
 
-            IERC20(AWETH_CONTRACT).safeTransferFrom(sender, address(this), swapInput); // Get user aTokens
+            IERC20(AWETH_CONTRACT).transferFrom(sender, address(this), swapInput); // Get user aTokens
+            
+            uint aWETHBalance = IERC20(AWETH_CONTRACT).balanceOf(address(this));
+            
+            require(aWETHBalance > 0, "No aWETH tokens");
+            
+            require(swapInput <= aWETHBalance, "Not enough aWETH to repay FlashLoan");
 
             LENDING_POOL.withdraw(path[0], type(uint256).max, address(this)); // Maybe swap directly with 1inch to simplify
+            
+            require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) == 0, "aWETH where not burned");
+            
+            require(swapInput <= IERC20(path[0]).balanceOf(address(this)), "Not enough WETH to repay FlashLoan");
 
+            IERC20(path[0]).safeApprove(address(UNISWAP_ROUTER), IERC20(path[0]).balanceOf(address(this)));
             uint deadline = block.timestamp + 15; // Pass this as argument
-            UNISWAP_ROUTER.swapETHForExactTokens{ value: address(this).balance }(amountOwing, path, address(this), deadline)[0];
+            UNISWAP_ROUTER.swapTokensForExactTokens(amountOwing, type(uint256).max, path, address(this), deadline)[0];
+        } else {
+            revert("Wrong FlashLoan callback method");
         }
 
         IERC20(assets[0]).safeApprove(address(LENDING_POOL), amountOwing);
