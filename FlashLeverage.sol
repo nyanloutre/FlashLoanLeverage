@@ -69,7 +69,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
     
         uint deadline = block.timestamp + 15; // Pass this as argument
         
-        IERC20(token).safeApprove(address(UNISWAP_ROUTER), amountIn);
+        IERC20(token).approve(address(UNISWAP_ROUTER), amountIn);
         
         swapReturns = UNISWAP_ROUTER.swapExactTokensForETH(amountIn, amountOutMin, path, address(this), deadline)[0];
         
@@ -118,7 +118,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         } else if (method == CallbackMethod.Close) {
             // Repay the debt using the FlashLoan
             
-            IERC20(assets[0]).safeApprove(address(LENDING_POOL), amounts[0]);
+            IERC20(assets[0]).approve(address(LENDING_POOL), amounts[0]);
             LENDING_POOL.repay(assets[0], amounts[0], 2, sender);
 
             // Swap aToken for flashloaned token
@@ -143,14 +143,14 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
             
             require(swapInput <= IERC20(path[0]).balanceOf(address(this)), "Not enough WETH to repay FlashLoan");
 
-            IERC20(path[0]).safeApprove(address(UNISWAP_ROUTER), IERC20(path[0]).balanceOf(address(this)));
+            IERC20(path[0]).approve(address(UNISWAP_ROUTER), IERC20(path[0]).balanceOf(address(this)));
             uint deadline = block.timestamp + 15; // Pass this as argument
             UNISWAP_ROUTER.swapTokensForExactTokens(amountOwing, type(uint256).max, path, address(this), deadline)[0];
         } else {
             revert("Wrong FlashLoan callback method");
         }
 
-        IERC20(assets[0]).safeApprove(address(LENDING_POOL), amountOwing);
+        IERC20(assets[0]).approve(address(LENDING_POOL), amountOwing);
 
         return true;
     }
