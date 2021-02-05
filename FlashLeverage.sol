@@ -40,6 +40,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
     address internal constant AAVE_CONTRACT = 0xB53C1a33016B2DC2fF3653530bfF1848a515c8c5;
     address internal constant UNISWAP_ROUTER_ADDRESS = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
     address internal constant WETH_GATEWAY_ADDRESS = 0xDcD33426BA191383f1c9B431A342498fdac73488;
+    address internal constant ONE_INCH_ADDRESS = 0x111111125434b319222CdBf8C261674aDB56F3ae;
     
     ILendingPoolAddressesProvider public override ADDRESSES_PROVIDER;
     ILendingPool public override LENDING_POOL;
@@ -91,23 +92,37 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         override
         returns (bool)
     {
-        (address sender, CallbackMethod method) = abi.decode(params, (address, CallbackMethod));
+        // (address sender, CallbackMethod method) = abi.decode(params, (address, CallbackMethod));
+        
+        (address sender, CallbackMethod method, bytes memory oneInchTxData) = abi.decode(params, (address, CallbackMethod, bytes));
         
         uint amountOwing = amounts[0].add(premiums[0]);
 
         if(method == CallbackMethod.Open) {
             uint amountOutMin = 0; // TODO: Pass this as argument
-            swapERC20ForETH(assets[0], IERC20(DAI_CONTRACT).balanceOf(address(this)), amountOutMin);
+            // swapERC20ForETH(assets[0], IERC20(DAI_CONTRACT).balanceOf(address(this)), amountOutMin);
+
+            require(IERC20(DAI_CONTRACT).balanceOf(address(this)) > 0, "No DAI");
+
+            IERC20(assets[0]).approve(address(ONE_INCH_ADDRESS), IERC20(DAI_CONTRACT).balanceOf(address(this)));
+            ONE_INCH_ADDRESS.call(oneInchTxData); // Swap DAI for WETH
+            
+            require(IERC20(DAI_CONTRACT).balanceOf(address(this)) == 0, "Did not convert all DAI");
 
             // Deposit ETH to AAVE
 
-            require(address(this).balance > 0, "Uniswap did not return ETH");
-            WETH_GATEWAY.depositETH{ value: address(this).balance }(sender, 0);
+            // require(address(this).balance > 0, "Uniswap did not return ETH");
+            // WETH_GATEWAY.depositETH{ value: address(this).balance }(sender, 0);
             // LENDING_POOL.deposit(address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE), address(this).balance, address(this), 0);
+            
+            require(IERC20(WETH_CONTRACT).balanceOf(address(this)) > 0, "1Inch did not return WETH");
+            IERC20(WETH_CONTRACT).approve(address(LENDING_POOL), IERC20(WETH_CONTRACT).balanceOf(address(this)));
+            LENDING_POOL.deposit(WETH_CONTRACT, IERC20(WETH_CONTRACT).balanceOf(address(this)), sender, 0);
+
+            require(IERC20(WETH_CONTRACT).balanceOf(address(this)) == 0, "AAVE didn't take all WETH");
 
             // Do something with the aWETH
-            require(IERC20(AWETH_CONTRACT).balanceOf(sender) > 0, "Did not receive any A token");
-            // require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) != 0, "Didn't receive any a token");
+            require(IERC20(AWETH_CONTRACT).balanceOf(sender) > 0, "Did not receive any A token from AAVE");
 
             // Borrow amountOwing DAI and repay the loan
 
@@ -157,7 +172,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
 
     // Amount is user funds (ex: $1k)
     // Ask for a flashloan of 2x the amount
-    function open(uint amount) public {
+    function open(uint amount, bytes calldata oneInchData) public {
         require(amount > 0, "amount must be greater than zero");
         
         IERC20(DAI_CONTRACT).safeTransferFrom(msg.sender, address(this), amount); // Get user funds
@@ -175,7 +190,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         modes[0] = 0;
 
         address onBehalfOf = address(this);
-        bytes memory params = abi.encode(msg.sender, CallbackMethod.Open);
+        bytes memory params = abi.encode(msg.sender, CallbackMethod.Open, oneInchData);
         uint16 referralCode = 0;
 
         LENDING_POOL.flashLoan(
@@ -189,7 +204,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         );
     }
     
-    function close(uint amount) public {
+    function close(uint amount, bytes calldata oneInchTxData) public {
         require(IERC20(AWETH_CONTRACT).balanceOf(msg.sender) > 0, "Must have collateral");
         require(IERC20(DEBT_DAI_CONTRACT).balanceOf(msg.sender) > 0, "Must have debt");
         
@@ -206,7 +221,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         modes[0] = 0;
 
         address onBehalfOf = address(this);
-        bytes memory params = abi.encode(msg.sender, CallbackMethod.Close);
+        bytes memory params = abi.encode(msg.sender, CallbackMethod.Close, oneInchTxData);
         uint16 referralCode = 0;
 
         LENDING_POOL.flashLoan(
