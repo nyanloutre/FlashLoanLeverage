@@ -84,7 +84,8 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
         require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) == withdrawAmount, "No aWETH tokens from user");
         
         IERC20(AWETH_CONTRACT).approve(address(ONE_INCH_ADDRESS), withdrawAmount);
-        ONE_INCH_ADDRESS.call(oneInchTxData); // Swap AWETH to DAI
+        (bool swapSuccess, ) = ONE_INCH_ADDRESS.call(oneInchTxData); // Swap AWETH to DAI
+        require(swapSuccess, "OneInch swap failed");
         
         require(IERC20(DAI_CONTRACT).balanceOf(address(this)) > 0, "got no DAI from oneInch");
     }
@@ -114,7 +115,8 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
             require(IERC20(DAI_CONTRACT).balanceOf(address(this)) > 0, "No DAI");
 
             IERC20(assets[0]).approve(address(ONE_INCH_ADDRESS), IERC20(DAI_CONTRACT).balanceOf(address(this)));
-            ONE_INCH_ADDRESS.call(oneInchTxData); // Swap DAI for WETH
+            (bool swapSuccess, ) = ONE_INCH_ADDRESS.call(oneInchTxData); // Swap DAI for WETH
+            require(swapSuccess, "OneInch swap failed");
             
             require(IERC20(DAI_CONTRACT).balanceOf(address(this)) == 0, "Did not convert all DAI");
 
