@@ -15,7 +15,7 @@ import { ICreditDelegationToken } from "https://raw.githubusercontent.com/aave/p
 
 import { IUniswapV2Router02 } from "https://github.com/Uniswap/uniswap-v2-periphery/blob/master/contracts/interfaces/IUniswapV2Router02.sol";
 
-contract FlashLoanArbitrageur is IFlashLoanReceiver {
+contract FlashLoanLeverage is IFlashLoanReceiver {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
     
@@ -75,13 +75,18 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         IERC20(asset).approve(address(LENDING_POOL), amount);
         LENDING_POOL.repay(asset, amount, 2, sender);
 
+        // require(IERC20(DAI_CONTRACT).balanceOf(address(this)) == 0, "remaining DAI after repay");
+
         // Swap aToken for flashloaned token
         
         IERC20(AWETH_CONTRACT).transferFrom(sender, address(this), withdrawAmount); // Get user aTokens
         
-        require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) > 0, "No aWETH tokens");
+        require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) == withdrawAmount, "No aWETH tokens from user");
         
+        IERC20(AWETH_CONTRACT).approve(address(ONE_INCH_ADDRESS), withdrawAmount);
         ONE_INCH_ADDRESS.call(oneInchTxData); // Swap AWETH to DAI
+        
+        require(IERC20(DAI_CONTRACT).balanceOf(address(this)) > 0, "got no DAI from oneInch");
     }
 
     // Convert the user funds and flashloan to ETH 
@@ -106,9 +111,6 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         uint amountOwing = amounts[0].add(premiums[0]);
 
         if(method == CallbackMethod.Open) {
-            // uint amountOutMin = 0; // TODO: Pass this as argument
-            // swapERC20ForETH(assets[0], IERC20(DAI_CONTRACT).balanceOf(address(this)), amountOutMin);
-
             require(IERC20(DAI_CONTRACT).balanceOf(address(this)) > 0, "No DAI");
 
             IERC20(assets[0]).approve(address(ONE_INCH_ADDRESS), IERC20(DAI_CONTRACT).balanceOf(address(this)));
@@ -117,10 +119,6 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
             require(IERC20(DAI_CONTRACT).balanceOf(address(this)) == 0, "Did not convert all DAI");
 
             // Deposit ETH to AAVE
-
-            // require(address(this).balance > 0, "Uniswap did not return ETH");
-            // WETH_GATEWAY.depositETH{ value: address(this).balance }(sender, 0);
-            // LENDING_POOL.deposit(address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE), address(this).balance, address(this), 0);
             
             require(IERC20(WETH_CONTRACT).balanceOf(address(this)) > 0, "1Inch did not return WETH");
             IERC20(WETH_CONTRACT).approve(address(LENDING_POOL), IERC20(WETH_CONTRACT).balanceOf(address(this)));
@@ -191,7 +189,7 @@ contract FlashLoanArbitrageur is IFlashLoanReceiver {
         );
     }
     
-    // repayAmount is how much debt will be repayed
+    // repayAmount is how much debt will be repayed by a FlashLoan
     // withdrawAmount is how much AWETH will be converted in order to repay the flashloan
     // withdrawAmount value should be higher than repayAmount to account for slippage
     function close(uint repayAmount, uint withdrawAmount, bytes calldata oneInchTxData) public {
