@@ -142,8 +142,11 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
         return true;
     }
 
-    // Amount is user funds (ex: $1k)
-    // Ask for a flashloan of 2x the amount
+    // inputToken is the user funds and debt token
+    // leveragedToken is the aToken
+    // amount is user funds
+    // oneInchTxData should call a swap for amount x3 inputToken (user funds + flashloan) to leveragedToken
+    // Ask for a flashloan of 2x the user amount
     function open(
         address inputToken,
         address leveragedToken,
@@ -181,9 +184,12 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
         );
     }
     
+    // inputToken is the debt token
+    // leveragedToken is the aToken
     // repayAmount is how much debt will be repayed by a FlashLoan
-    // withdrawAmount is how much AWETH will be converted in order to repay the flashloan
+    // withdrawAmount is how much aToken will be converted in order to repay the flashloan
     // withdrawAmount value should be higher than repayAmount to account for slippage
+    // oneInchTxData should call a swap for withdrawAmount aToken to inputToken
     function close(
         address inputToken,
         address leveragedToken,
