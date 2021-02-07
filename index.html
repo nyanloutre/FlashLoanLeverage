@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Titre de la page</title>
+  <link href="https://unpkg.com/nes.css@2.3.0/css/nes.min.css" rel="stylesheet" />
+  <style>
+    @font-face {
+      font-family: pressStart;
+      src: url(fonts/PressStart2P-Regular.ttf);
+    }
+    body {
+      font-family: pressStart;
+      margin: 2rem;
+    }
+    .nes-select {
+      max-width: 10rem;
+    }
+    .nes-btn {
+      margin-top: 1rem;
+    }
+    .nes-container {
+      margin-top: 1rem;
+    }
+    #logo {
+      max-height: 8rem;
+      margin-right: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <h1><img src="img/Untitled-1.svg" id="logo">STONK Master</h1>
+  <div class="nes-container with-title">
+    <p class="title">Setup</p>
+    <div class="nes-field">
+      <label for="contract">Contract address:</label>
+      <input id="contract" name="contract" class="nes-input">
+    </div>
+    <div class="nes-select">
+      <label for="ERC20input">Input token:</label>
+      <select name="ERC20input" id="ERC20input"></select>
+    </div>
+    <div class="nes-select">
+      <label for="ERC20output">Leveraged token:</label>
+      <select name="ERC20output" id="ERC20output"></select>
+    </div>
+    <button type="button" id="swap" class="nes-btn">Get some input token</button>
+  </div>
+  <div class="nes-container with-title">
+    <p class="title">Open position</p>
+    <div class="nes-field">
+      <label for="openAmount">Input amount:</label>
+      <input id="openAmount" name="openAmount" type="number" class="nes-input">
+    </div>
+    <button type="button" id="approve_delegate" class="nes-btn">Approve delegate borrowing</button>
+    <button type="button" id="approve_token" class="nes-btn">Approve input token spending</button>
+    <button type="button" id="open_position" class="nes-btn is-success">Open</button>
+  </div>
+  <div class="nes-container with-title">
+    <p class="title">Close position</p>
+    <div class="nes-field">
+      <label for="closeAmount">aToken amount:</label>
+      <input id="closeAmount" name="closeAmount" type="number" class="nes-input">
+    </div>
+    <button type="button" id="approve_atoken" class="nes-btn">Approve aToken for contract</button>
+    <button type="button" id="close_position" class="nes-btn is-error">Close</button>
+  </div>
+  <div class="nes-container with-title">
+    <p class="title">State</p>
+    <table id="statusTable">
+      <thead>
+        <tr>
+          <th>Token</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <script src="https://unpkg.com/web3@^1/dist/web3.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
