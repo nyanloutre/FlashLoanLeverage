@@ -12,6 +12,7 @@ import { ILendingPool } from "https://raw.githubusercontent.com/aave/protocol-v2
 import { IWETHGateway } from "https://raw.githubusercontent.com/aave/protocol-v2/ice/mainnet-deployment-03-12-2020/contracts/misc/interfaces/IWETHGateway.sol";
 import { IAToken } from "https://raw.githubusercontent.com/aave/protocol-v2/ice/mainnet-deployment-03-12-2020/contracts/interfaces/IAToken.sol";
 import { ICreditDelegationToken } from "https://raw.githubusercontent.com/aave/protocol-v2/master/contracts/interfaces/ICreditDelegationToken.sol";
+import { IProtocolDataProvider } from "https://raw.githubusercontent.com/aave/code-examples-protocol/main/V2/Credit%20Delegation/Interfaces.sol";
 
 import { IUniswapV2Router02 } from "https://github.com/Uniswap/uniswap-v2-periphery/blob/master/contracts/interfaces/IUniswapV2Router02.sol";
 
@@ -81,7 +82,7 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
         
         IERC20(AWETH_CONTRACT).transferFrom(sender, address(this), withdrawAmount); // Get user aTokens
         
-        require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) == withdrawAmount, "No aWETH tokens from user");
+        require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) == withdrawAmount, "Got wrong amount of aWETH tokens from user");
         
         IERC20(AWETH_CONTRACT).approve(address(ONE_INCH_ADDRESS), withdrawAmount);
         (bool swapSuccess, ) = ONE_INCH_ADDRESS.call(oneInchTxData); // Swap AWETH to DAI
