@@ -25,70 +25,89 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
         Close
     }
     
-    // Kovan adresses
-    // address internal constant DAI_CONTRACT = 0xFf795577d9AC8bD7D90Ee22b6C1703490b6512FD;
-    // address internal constant WETH_CONTRACT = 0xd0A1E359811322d97991E03f863a0C30C2cF029C;
-    // address internal constant AWETH_CONTRACT = 0x87b1f4cf9BD63f7BBD3eE1aD04E8F52540349347;
-    // address internal constant AAVE_CONTRACT = 0x88757f2f99175387aB4C6a4b3067c77A695b0349;
-    // address internal constant UNISWAP_ROUTER_ADDRESS = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
-    // address internal constant WETH_GATEWAY_ADDRESS = 0xf8aC10E65F2073460aAD5f28E1EABE807DC287CF;
-    
-    // Mainnet
-    address internal constant DAI_CONTRACT = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
-    address internal constant DEBT_DAI_CONTRACT = 0x6C3c78838c761c6Ac7bE9F59fe808ea2A6E4379d;
-    address internal constant WETH_CONTRACT = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address internal constant AWETH_CONTRACT = 0x030bA81f1c18d280636F32af80b9AAd02Cf0854e;
     address internal constant AAVE_CONTRACT = 0xB53C1a33016B2DC2fF3653530bfF1848a515c8c5;
-    address internal constant UNISWAP_ROUTER_ADDRESS = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
-    address internal constant WETH_GATEWAY_ADDRESS = 0xDcD33426BA191383f1c9B431A342498fdac73488;
+    address internal constant AAVE_PROTOCOL_PROVIDER_CONTRACT = 0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d;
     address internal constant ONE_INCH_ADDRESS = 0x111111125434b319222CdBf8C261674aDB56F3ae;
+    
+    uint public constant AAVE_INTEREST_MODE = 2;
     
     ILendingPoolAddressesProvider public override ADDRESSES_PROVIDER;
     ILendingPool public override LENDING_POOL;
-    IWETHGateway public WETH_GATEWAY;
-
-    IUniswapV2Router02 public UNISWAP_ROUTER;
-    
-    // constructor(ILendingPoolAddressesProvider provider) public {
-    //     ADDRESSES_PROVIDER = provider;
-    //     LENDING_POOL = ILendingPool(provider.getLendingPool());
-    // }
+    IProtocolDataProvider public AAVE_PROTOCOL_PROVIDER;
     
     constructor() public {
         ADDRESSES_PROVIDER = ILendingPoolAddressesProvider(AAVE_CONTRACT);
         LENDING_POOL = ILendingPool(ADDRESSES_PROVIDER.getLendingPool());
-        WETH_GATEWAY = IWETHGateway(WETH_GATEWAY_ADDRESS);
-        UNISWAP_ROUTER = IUniswapV2Router02(UNISWAP_ROUTER_ADDRESS);
+        AAVE_PROTOCOL_PROVIDER = IProtocolDataProvider(AAVE_PROTOCOL_PROVIDER_CONTRACT);
     }
 
     receive() external payable {
     }
 
     function closePosition(
-        address asset,
-        uint amount,
-        address sender,
-        uint withdrawAmount,
-        bytes memory oneInchTxData
+        address inputToken,
+        uint owingAmount,
+        bytes calldata params
     ) internal {
+        (, address sender, address leveragedToken, bytes memory oneInchTxData, uint withdrawAmount) = abi.decode(params, (CallbackMethod, address, address, bytes, uint));
+        (address aToken,,) = AAVE_PROTOCOL_PROVIDER.getReserveTokensAddresses(leveragedToken);
+        
         // Repay the debt using the FlashLoan
         
-        IERC20(asset).approve(address(LENDING_POOL), amount);
-        LENDING_POOL.repay(asset, amount, 2, sender);
-
-        // require(IERC20(DAI_CONTRACT).balanceOf(address(this)) == 0, "remaining DAI after repay");
+        uint repayAmount = IERC20(inputToken).balanceOf(address(this));
+        IERC20(inputToken).approve(address(LENDING_POOL), repayAmount);
+        LENDING_POOL.repay(inputToken, repayAmount, AAVE_INTEREST_MODE, sender);
 
         // Swap aToken for flashloaned token
-        
-        IERC20(AWETH_CONTRACT).transferFrom(sender, address(this), withdrawAmount); // Get user aTokens
-        
-        require(IERC20(AWETH_CONTRACT).balanceOf(address(this)) == withdrawAmount, "Got wrong amount of aWETH tokens from user");
-        
-        IERC20(AWETH_CONTRACT).approve(address(ONE_INCH_ADDRESS), withdrawAmount);
+
+        IERC20(aToken).safeTransferFrom(sender, address(this), withdrawAmount); // Get user aTokens
+
+        IERC20(aToken).approve(address(ONE_INCH_ADDRESS), withdrawAmount);
         (bool swapSuccess, ) = ONE_INCH_ADDRESS.call(oneInchTxData); // Swap AWETH to DAI
         require(swapSuccess, "OneInch swap failed");
         
-        require(IERC20(DAI_CONTRACT).balanceOf(address(this)) > 0, "got no DAI from oneInch");
+        require(IERC20(inputToken).balanceOf(address(this)) > 0, "got no DAI from oneInch");
+            
+        // TODO: fail if AAVE risk is too high
+        
+        require(IERC20(inputToken).balanceOf(address(this)) > owingAmount, "Not enough DAI to repay");
+        
+        // Return excess tokens to sender
+        if(IERC20(inputToken).balanceOf(address(this)) > owingAmount) {
+            IERC20(inputToken).transfer(sender, IERC20(inputToken).balanceOf(address(this)) - owingAmount);
+        }
+    }
+
+    function openPosition(
+        address inputToken,
+        uint owingAmount,
+        bytes calldata params
+    ) internal {
+        (, address sender, address leveragedToken, bytes memory oneInchTxData,) = abi.decode(params, (CallbackMethod, address, address, bytes, uint));
+        (,,address debtToken) = AAVE_PROTOCOL_PROVIDER.getReserveTokensAddresses(inputToken);
+        (address aToken,,) = AAVE_PROTOCOL_PROVIDER.getReserveTokensAddresses(leveragedToken);
+
+        // oneInch swap user token and borrowed token for leveraging token
+        
+        IERC20(inputToken).approve(address(ONE_INCH_ADDRESS), IERC20(inputToken).balanceOf(address(this)));
+        (bool swapSuccess, ) = ONE_INCH_ADDRESS.call(oneInchTxData);
+        require(swapSuccess, "OneInch swap failed");
+        require(IERC20(inputToken).balanceOf(address(this)) == 0, "Did not convert all DAI");
+        require(IERC20(leveragedToken).balanceOf(address(this)) > 0, "oneInch did not return expected token");
+    
+        // Deposit leveraging token to AAVE on behalf of user
+        
+        IERC20(leveragedToken).approve(address(LENDING_POOL), IERC20(leveragedToken).balanceOf(address(this)));
+        LENDING_POOL.deposit(leveragedToken, IERC20(leveragedToken).balanceOf(address(this)), sender, 0);
+        require(IERC20(leveragedToken).balanceOf(address(this)) == 0, "AAVE didn't take all leveraging token");
+        require(IERC20(aToken).balanceOf(sender) > 0, "Did not receive any A token from AAVE");
+    
+        // Borrow amountOwing DAI and repay the loan
+    
+        require(ICreditDelegationToken(debtToken).borrowAllowance(sender, address(this)) >= owingAmount, "Not enough allowance to borrow");
+        LENDING_POOL.borrow(inputToken, owingAmount, AAVE_INTEREST_MODE, 0, sender);
+    
+        require(IERC20(inputToken).balanceOf(address(this)) >= owingAmount, "Not enough funds to repay");
     }
 
     // Convert the user funds and flashloan to ETH 
@@ -106,79 +125,49 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
         override
         returns (bool)
     {
-        // (address sender, CallbackMethod method) = abi.decode(params, (address, CallbackMethod));
-        
-        (address sender, CallbackMethod method, bytes memory oneInchTxData, uint withdrawAmount) = abi.decode(params, (address, CallbackMethod, bytes, uint));
-        
-        uint amountOwing = amounts[0].add(premiums[0]);
+        (CallbackMethod method,,,,) = abi.decode(params, (CallbackMethod, address, address, bytes, uint));
+
+        uint owingAmount = amounts[0].add(premiums[0]);
 
         if(method == CallbackMethod.Open) {
-            require(IERC20(DAI_CONTRACT).balanceOf(address(this)) > 0, "No DAI");
-
-            IERC20(assets[0]).approve(address(ONE_INCH_ADDRESS), IERC20(DAI_CONTRACT).balanceOf(address(this)));
-            (bool swapSuccess, ) = ONE_INCH_ADDRESS.call(oneInchTxData); // Swap DAI for WETH
-            require(swapSuccess, "OneInch swap failed");
-            
-            require(IERC20(DAI_CONTRACT).balanceOf(address(this)) == 0, "Did not convert all DAI");
-
-            // Deposit ETH to AAVE
-            
-            require(IERC20(WETH_CONTRACT).balanceOf(address(this)) > 0, "1Inch did not return WETH");
-            IERC20(WETH_CONTRACT).approve(address(LENDING_POOL), IERC20(WETH_CONTRACT).balanceOf(address(this)));
-            LENDING_POOL.deposit(WETH_CONTRACT, IERC20(WETH_CONTRACT).balanceOf(address(this)), sender, 0);
-
-            require(IERC20(WETH_CONTRACT).balanceOf(address(this)) == 0, "AAVE didn't take all WETH");
-
-            // Do something with the aWETH
-            require(IERC20(AWETH_CONTRACT).balanceOf(sender) > 0, "Did not receive any A token from AAVE");
-
-            // Borrow amountOwing DAI and repay the loan
-
-            require(ICreditDelegationToken(DEBT_DAI_CONTRACT).borrowAllowance(sender, address(this)) >= amountOwing, "Not enough allowance to borrow");
-            LENDING_POOL.borrow(DAI_CONTRACT, amountOwing, 2, 0, sender);
-
-            require(IERC20(DAI_CONTRACT).balanceOf(address(this)) >= amountOwing, "Not enough funds to repay");
+            openPosition(assets[0], owingAmount, params);
         } else if (method == CallbackMethod.Close) {
-            closePosition(assets[0], amounts[0], sender, withdrawAmount, oneInchTxData);
-            
-            // TODO: fail if AAVE risk is too high
-            
-            require(IERC20(DAI_CONTRACT).balanceOf(address(this)) > amountOwing, "Not enough DAI to repay");
-            
-            // Return excess DAI to sender
-            if(IERC20(DAI_CONTRACT).balanceOf(address(this)) > amountOwing) {
-                IERC20(DAI_CONTRACT).transfer(sender, IERC20(DAI_CONTRACT).balanceOf(address(this)) - amountOwing);
-            }
+            closePosition(assets[0], owingAmount, params);
         } else {
             revert("Wrong FlashLoan callback method");
         }
 
-        IERC20(assets[0]).approve(address(LENDING_POOL), amountOwing);
+        IERC20(assets[0]).approve(address(LENDING_POOL), owingAmount);
 
         return true;
     }
 
     // Amount is user funds (ex: $1k)
     // Ask for a flashloan of 2x the amount
-    function open(uint amount, bytes calldata oneInchTxData) public {
+    function open(
+        address inputToken,
+        address leveragedToken,
+        uint amount,
+        bytes calldata oneInchTxData
+    ) public {
         require(amount > 0, "amount must be greater than zero");
-        
-        IERC20(DAI_CONTRACT).safeTransferFrom(msg.sender, address(this), amount); // Get user funds
+
+        IERC20(inputToken).safeTransferFrom(msg.sender, address(this), amount);
         
         address receiverAddress = address(this);
 
         address[] memory assets = new address[](1);
-        assets[0] = DAI_CONTRACT;
+        assets[0] = inputToken;
 
         uint[] memory amounts = new uint[](1);
-        amounts[0] = amount.mul(2); // Maybe as input for leverage multiplicator
+        amounts[0] = amount.mul(2); // TODO: input for leverage multiplicator
 
         // 0 = no debt, 1 = stable, 2 = variable
         uint[] memory modes = new uint[](1);
         modes[0] = 0;
 
         address onBehalfOf = address(this);
-        bytes memory params = abi.encode(msg.sender, CallbackMethod.Open, oneInchTxData, 0);
+        bytes memory params = abi.encode(CallbackMethod.Open, msg.sender, leveragedToken, oneInchTxData, 0);
         uint16 referralCode = 0;
 
         LENDING_POOL.flashLoan(
@@ -195,14 +184,23 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
     // repayAmount is how much debt will be repayed by a FlashLoan
     // withdrawAmount is how much AWETH will be converted in order to repay the flashloan
     // withdrawAmount value should be higher than repayAmount to account for slippage
-    function close(uint repayAmount, uint withdrawAmount, bytes calldata oneInchTxData) public {
-        require(IERC20(AWETH_CONTRACT).balanceOf(msg.sender) > 0, "Must have collateral");
-        require(IERC20(DEBT_DAI_CONTRACT).balanceOf(msg.sender) > 0, "Must have debt");
+    function close(
+        address inputToken,
+        address leveragedToken,
+        uint repayAmount,
+        uint withdrawAmount,
+        bytes calldata oneInchTxData
+    ) public {
+        (,,address debtToken) = AAVE_PROTOCOL_PROVIDER.getReserveTokensAddresses(inputToken);
+        require(IERC20(debtToken).balanceOf(msg.sender) > 0, "Must have debt");
+        
+        (address aToken,,) = AAVE_PROTOCOL_PROVIDER.getReserveTokensAddresses(leveragedToken);
+        require(IERC20(aToken).balanceOf(msg.sender) > 0, "Must have collateral");
         
         address receiverAddress = address(this);
         
         address[] memory assets = new address[](1);
-        assets[0] = DAI_CONTRACT;
+        assets[0] = inputToken;
 
         uint[] memory amounts = new uint[](1);
         amounts[0] = repayAmount;
@@ -212,7 +210,7 @@ contract FlashLoanLeverage is IFlashLoanReceiver {
         modes[0] = 0;
 
         address onBehalfOf = address(this);
-        bytes memory params = abi.encode(msg.sender, CallbackMethod.Close, oneInchTxData, withdrawAmount);
+        bytes memory params = abi.encode(CallbackMethod.Close, msg.sender, leveragedToken, oneInchTxData, withdrawAmount);
         uint16 referralCode = 0;
 
         LENDING_POOL.flashLoan(
